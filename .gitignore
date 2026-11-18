@@ -1,0 +1,17 @@
+#IDE
+.idea/
+
+#Python
+__pycache__/
+venv/
+.venv/
+
+#Secret
+.env
+
+#OS
+Thumbs.db
+
+#data
+data/snapshots/*
+!data/snapshots/.gitkeep
