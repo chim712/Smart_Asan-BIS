@@ -11,47 +11,25 @@ fix_shape.py로 보정한 크롤링 JSON 전체(상·하행, 시내·공영 모�
 
 ID는 좌표에서 만든 해시(63bit 정수)라 재빌드해도 안 바뀐 점·구간은 같은 ID를 유지한다.
 출력은 DB 테이블과 1:1로 대응하는 JSON이다. 표준 라이브러리만 사용한다.
+입력의 meta.errors(수집 실패 노선)는 치명적 이슈 "수집 실패"가 되어 ④ 적재를 막는다.
 
-    python3 build_city_graph.py asan_series_all_fixed.json --out city_graph.json
+    python -m core.graph.build_city_graph data/snapshots/2026-12-01/fixed.json   # → 같은 폴더 graph.json
+    python -m core.graph.build_city_graph fixed.json --out graph.json
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import math
-import re
 import sys
 from collections import Counter, defaultdict
+from pathlib import Path
 
-LAT0 = 36.78
-KX = 111_320 * math.cos(math.radians(LAT0))  # 경도 1도(m)
-KY = 110_574                                  # 위도 1도(m)
+from core.geo import dedupe, dist_m, project
+from core.groups import default_group
 
-
-# ---------- 기하 ----------
-def dist_m(a, b) -> float:
-    return math.hypot((a[0] - b[0]) * KY, (a[1] - b[1]) * KX)
-
-
-def project(p, a, b):
-    """점 p를 선분 a-b에 투영 → (거리 m, 비율 t)."""
-    ax, ay, bx, by = a[1] * KX, a[0] * KY, b[1] * KX, b[0] * KY
-    px, py = p[1] * KX, p[0] * KY
-    dx, dy = bx - ax, by - ay
-    n = dx * dx + dy * dy
-    t = 0.0 if n == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / n))
-    return math.hypot(px - ax - t * dx, py - ay - t * dy), t
-
-
-def dedupe(points) -> list[tuple]:
-    out: list[tuple] = []
-    for lat, lng in points:
-        p = (lat, lng)
-        if not out or out[-1] != p:
-            out.append(p)
-    return out
-
+# 이 접두어로 시작하는 meta.issues는 치명적이다(④ 적재 거부). 나머지는 경고.
+FATAL_PREFIXES = ("경로 끊김", "수집 실패", "segment_id", "node_id")
 
 # ---------- ID / 해시 ----------
 def h63(*parts) -> int:
@@ -66,20 +44,6 @@ def hex_hash(obj) -> str:
 
 def pt_key(p) -> str:
     return f"{p[0]:.7f},{p[1]:.7f}"
-
-
-# ---------- 계열 기본값 ----------
-def default_group(name: str) -> str:
-    """번호 규칙 기본값. 관리자 테이블(route_group_override)이 우선한다."""
-    m = re.fullmatch(r"(\d+)(?:-\d+)?", name.strip())
-    if not m:
-        return "X"
-    n = int(m.group(1))
-    if 100 <= n <= 999:
-        return str(n // 100)
-    if 10 <= n <= 99:
-        return str(n // 10)
-    return "X"
 
 
 # ---------- 빌드 ----------
@@ -292,18 +256,26 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="시 전체 유향 도로 그래프 빌더")
     ap.add_argument("input", help="fix_shape.py 출력 JSON")
     ap.add_argument("--merge-below", type=float, default=30.0, help="이 길이(m) 미만 무정차 구간을 한 점으로 합침")
-    ap.add_argument("--out", default="city_graph.json")
+    ap.add_argument("--out", default=None, help="출력 JSON (기본: 입력과 같은 폴더의 graph.json)")
     a = ap.parse_args()
+    out = Path(a.out) if a.out else Path(a.input).with_name("graph.json")
 
-    data = json.load(open(a.input, encoding="utf-8"))
-    routes = [r for r in data["routes"] if r.get("shape") and r.get("stops")
-              and r["info"].get("route_type", "").strip() != "13"]
+    with open(a.input, encoding="utf-8") as fp:
+        data = json.load(fp)
+    crawl_errors = data["meta"].get("errors", [])
+    failed = {e["route_id"] for e in crawl_errors}
+    targets = [r for r in data["routes"] if r["info"].get("route_type", "").strip() != "13"]
+    routes = [r for r in targets if r.get("shape") and r.get("stops")]
     g = build(routes, a.merge_below)
-    issues = validate(g)
+    issues = [f"수집 실패: {e['route_id']} {e.get('error', '')}" for e in crawl_errors]
+    issues += [f"선형·정류소 없음(제외): {r['info']['route_id']}" for r in targets
+               if not (r.get("shape") and r.get("stops")) and r["info"]["route_id"] not in failed]
+    issues += validate(g)
     g["meta"] = {"source_crawled_at": data["meta"].get("crawled_at"),
                  "shape_fixes": data["meta"].get("shape_fixes", []),
                  "merge_below_m": a.merge_below, "issues": issues}
-    json.dump(g, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
+    with open(out, "w", encoding="utf-8") as fp:
+        json.dump(g, fp, ensure_ascii=False, separators=(",", ":"))
 
     n = g["nodes"]
     snaps = sorted(x["snap_dist_m"] for x in g["route_stop"])
@@ -312,10 +284,14 @@ def main() -> int:
           f"정류소 {len(g['stops'])}개, 노선-정류소 {len(snaps)}건 "
           f"(투영거리 중앙값 {snaps[len(snaps)//2]}m, 최대 {snaps[-1]}m)")
     print(f"graph_hash {g['graph_hash'][:12]}  검증 문제 {len(issues)}건")
-    for s in issues[:20]:
+    fatal = [s for s in issues if s.startswith(FATAL_PREFIXES)]
+    for s in (fatal + [s for s in issues if s not in fatal])[:20]:
         print("  -", s)
-    print(f"저장: {a.out}")
-    return 0 if not any(s.startswith(("경로 끊김", "segment_id", "node_id")) for s in issues) else 2
+    print(f"저장: {out}")
+    if fatal:
+        print(f"치명적 문제 {len(fatal)}건: 이 그래프는 적재되지 않습니다.", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

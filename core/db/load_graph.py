@@ -6,23 +6,26 @@
 - 최근 --keep 개 버전만 남기고 오래된 버전은 지운다(FK CASCADE).
 - 그래프가 같고 시간표·노선정보만 바뀐 경우도 새 버전으로 넣는다(단순·일관). 변경 종류는 출력으로 알린다.
 
-접속 정보는 ~/.my.cnf 의 [asan_bis] 그룹(또는 --defaults-file)에서 읽는다.
+접속 정보는 core/config.py 가 .env(또는 환경변수)에서 읽는다. 프로젝트 루트에서 모듈로 실행한다.
 
-    python3 load_graph.py city_graph.json
-    python3 load_graph.py city_graph.json --dry-run      # 변경 여부만 확인
-    python3 load_graph.py city_graph.json --no-activate  # 넣기만 하고 전환은 수동
+    python -m core.db.load_graph data/snapshots/2026-12-01/graph.json
+    python -m core.db.load_graph graph.json --dry-run      # 변경 여부만 확인
+    python -m core.db.load_graph graph.json --no-activate  # 넣기만 하고 전환은 수동
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import os
 import sys
 
 import pymysql
 
-BATCH = 2000
+from core.config import db_params
+from core.graph.build_city_graph import FATAL_PREFIXES
+
+BATCH = 2000      # executemany 묶음 (%s만 있는 INSERT는 pymysql이 여러 행 VALUES로 합친다)
+GEO_BATCH = 500   # ST_GeomFromText가 든 INSERT는 pymysql이 합치지 못하므로 직접 여러 행으로 묶는다
 
 
 def data_hash(g: dict) -> str:
@@ -41,6 +44,14 @@ def wkt_line(points) -> str:
 def many(cur, sql, rows):
     for i in range(0, len(rows), BATCH):
         cur.executemany(sql, rows[i:i + BATCH])
+
+
+def many_values(cur, head: str, row_sql: str, rows) -> None:
+    """head + row_sql을 여러 행 묶어 한 번에 실행한다. 예: head="INSERT INTO stop VALUES ",
+    row_sql="(%s,%s,ST_GeomFromText(%s,4326))"."""
+    for i in range(0, len(rows), GEO_BATCH):
+        chunk = rows[i:i + GEO_BATCH]
+        cur.execute(head + ",".join([row_sql] * len(chunk)), [v for row in chunk for v in row])
 
 
 def active(cur):
@@ -79,12 +90,12 @@ def load(conn, g: dict, dhash: str) -> int:
         many(cur, "INSERT INTO route_timetable VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
              [(vid, t["route_id"], t["seq"], t["src_ord"], t["departure"], t["weekday"] == "1",
                t["saturday"] == "1", t["holiday"] == "1", t["vacation"] == "1") for t in g["timetable"]])
-        many(cur, "INSERT INTO stop VALUES (%s,%s,%s,%s,%s,%s,ST_GeomFromText(%s,4326))",
+        many_values(cur, "INSERT INTO stop VALUES ", "(%s,%s,%s,%s,%s,%s,ST_GeomFromText(%s,4326))",
              [(vid, s["stop_id"], s["service_id"], s["name"], s["lat"], s["lng"], wkt_point(s["lat"], s["lng"]))
               for s in g["stops"]])
         many(cur, "INSERT INTO node VALUES (%s,%s,%s,%s,%s,%s)",
              [(vid, n["node_id"], n["lat"], n["lng"], n["in_deg"], n["out_deg"]) for n in g["nodes"]])
-        many(cur, "INSERT INTO segment VALUES (%s,%s,%s,%s,%s,%s,ST_GeomFromText(%s,4326))",
+        many_values(cur, "INSERT INTO segment VALUES ", "(%s,%s,%s,%s,%s,%s,ST_GeomFromText(%s,4326))",
              [(vid, s["segment_id"], s["from_node"], s["to_node"], s["length_m"], s["trips_weekday"],
                wkt_line(s["points"])) for s in g["segments"]])
         many(cur, "INSERT INTO route_segment VALUES (%s,%s,%s,%s)",
@@ -103,14 +114,21 @@ def load(conn, g: dict, dhash: str) -> int:
 
 
 def activate(conn, vid: int, keep: int) -> None:
+    """vid를 활성 버전으로 전환하고, 활성 버전을 뺀 최근 keep-1개만 남긴다.
+
+    정리 대상은 status가 아니라 current_version 기준으로 고른다. --no-activate 후 SQL로 직접
+    전환해 status가 어긋나 있어도 활성 버전은 지워지지 않고, 남은 ready/loading 버전도 정리된다.
+    """
     cur = conn.cursor()
-    cur.execute("UPDATE graph_version SET status='retired' WHERE status='active'")
+    cur.execute("UPDATE graph_version SET status='retired' WHERE version_id<>%s AND (status='active' OR "
+                "version_id=(SELECT version_id FROM current_version WHERE id=1))", (vid,))
     cur.execute("INSERT INTO current_version (id, version_id) VALUES (1,%s) "
                 "ON DUPLICATE KEY UPDATE version_id=VALUES(version_id)", (vid,))
     cur.execute("UPDATE graph_version SET status='active' WHERE version_id=%s", (vid,))
     conn.commit()
-    cur.execute("SELECT version_id FROM graph_version WHERE status IN ('retired','failed') "
-                "ORDER BY version_id DESC LIMIT 100 OFFSET %s", (max(keep - 1, 0),))
+    cur.execute("SELECT version_id FROM graph_version WHERE version_id <> "
+                "(SELECT version_id FROM current_version WHERE id=1) "
+                "ORDER BY version_id DESC LIMIT 1000 OFFSET %s", (max(keep - 1, 0),))
     old = [r[0] for r in cur.fetchall()]
     for v in old:
         cur.execute("DELETE FROM graph_version WHERE version_id=%s", (v,))
@@ -122,23 +140,21 @@ def activate(conn, vid: int, keep: int) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="도시 그래프 MariaDB 적재")
     ap.add_argument("graph", help="build_city_graph.py 출력 JSON")
-    ap.add_argument("--defaults-file", default=os.path.expanduser("~/.my.cnf"))
-    ap.add_argument("--group", default="asan_bis", help="my.cnf 그룹 이름")
     ap.add_argument("--keep", type=int, default=3, help="보관할 버전 수(활성 포함)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-activate", action="store_true")
     ap.add_argument("--force", action="store_true", help="변경이 없어도 새 버전으로 적재")
     a = ap.parse_args()
 
-    g = json.load(open(a.graph, encoding="utf-8"))
-    fatal = [s for s in g.get("meta", {}).get("issues", []) if s.startswith(("경로 끊김", "segment_id", "node_id"))]
+    with open(a.graph, encoding="utf-8") as fp:
+        g = json.load(fp)
+    fatal = [s for s in g.get("meta", {}).get("issues", []) if s.startswith(FATAL_PREFIXES)]
     if fatal:
         print("그래프 검증 실패로 적재하지 않습니다:", *fatal[:10], sep="\n  ")
         return 2
     dhash = data_hash(g)
 
-    conn = pymysql.connect(read_default_file=a.defaults_file, read_default_group=a.group,
-                           database="asan_bis", charset="utf8mb4", autocommit=False)
+    conn = pymysql.connect(**db_params())
     cur = conn.cursor()
     cur_ver = active(cur)
     if cur_ver:

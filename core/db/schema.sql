@@ -172,3 +172,11 @@ FROM stop st JOIN current_version c ON c.version_id = st.version_id;
 CREATE OR REPLACE VIEW v_route_stop AS
 SELECT rs.route_id, rs.ord, rs.stop_id, rs.segment_id, rs.offset_m, rs.snap_dist_m
 FROM route_stop rs JOIN current_version c ON c.version_id = rs.version_id;
+
+CREATE OR REPLACE VIEW v_node AS
+SELECT n.node_id, n.lat, n.lng, n.in_deg, n.out_deg
+FROM node n JOIN current_version c ON c.version_id = n.version_id;
+
+CREATE OR REPLACE VIEW v_route_timetable AS
+SELECT t.route_id, t.seq, t.src_ord, t.departure, t.weekday, t.saturday, t.holiday, t.vacation
+FROM route_timetable t JOIN current_version c ON c.version_id = t.version_id;

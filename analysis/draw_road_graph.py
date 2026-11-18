@@ -5,8 +5,8 @@ build_road_graph.py 출력 JSON으로 그림 두 장을 만든다.
   1) *_geo.svg       : 실제 위도·경도 위에 도로 구간과 정류소를 그린 지도형 그림
   2) *_schematic.svg : 본선축을 일자로 펴고, 지선을 위도 기준(북쪽이 위)으로 배치한 노선도
 
-사용 예:
-    python3 draw_road_graph.py asan_series_4_road_dir1.json --axis 451
+프로젝트 루트에서 모듈로 실행한다.
+    python -m analysis.draw_road_graph asan_series_4_road_dir1.json --axis 451
 """
 from __future__ import annotations
 
@@ -20,9 +20,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
+from core.geo import KX, KY
+
 STRAND_COLORS = ["#d6336c", "#1c7ed6", "#2f9e44", "#e8590c", "#7048e8", "#0c8599"]
 SHARED_COLOR = "#343a40"
-LNG_SCALE = 0.8
+LNG_SCALE = KX / KY  # 경도 1도 길이 / 위도 1도 길이 (core.geo 기준)
 
 
 def setup_font() -> None:

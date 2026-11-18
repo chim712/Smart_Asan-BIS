@@ -1,51 +1,27 @@
 #!/usr/bin/env python3
 """도로 그래프 빌더.
 
-crawl_asan.py 출력의 노선 선형 좌표(shape)를 도로로 삼아
+fix_shape 보정을 거친 크롤링 JSON의 노선 선형 좌표(shape)를 도로로 삼아
   1) 도로 층: 좌표가 정확히 일치하는 점을 같은 지점으로 보고 방향 그래프를 만든 뒤,
      분기·합류·기종점 사이를 도로 구간(road segment)으로 압축한다.
   2) 정류소 층: 각 정류소를 자기 노선의 선형 위에 투영해 (구간, 구간 내 거리)로 붙인다.
   3) 노선 층: 노선마다 지나는 도로 구간 목록과 정차 정류소 목록을 가진다.
 결과를 JSON으로 저장한다. 표준 라이브러리만 사용한다.
 
-사용 예:
-    python3 build_road_graph.py asan_series_4.json --direction 1 --exclude-types 101
+프로젝트 루트에서 모듈로 실행한다(core.geo를 쓴다).
+    python -m analysis.build_road_graph data/snapshots/2026-12-01/fixed.json --direction 1 --exclude-types 101
+
+--direction은 원본 route_direction 값으로 거른다(615, 660, 303, 304 오등록 주의).
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from collections import defaultdict
 
-LNG_SCALE = 0.8  # 위도 36.8도 부근에서 경도 1도의 길이는 위도 1도의 약 0.8배
+from core.geo import dedupe, dist_m, project  # noqa: F401  (경도 환산은 core.geo 기준 하나)
 
-
-def dist_m(a, b) -> float:
-    return 111_000 * math.hypot(a[0] - b[0], (a[1] - b[1]) * LNG_SCALE)
-
-
-def project(p, a, b) -> tuple[float, float]:
-    """점 p를 선분 a-b에 투영한다. (선분까지 거리 m, 선분 위 비율 0~1)을 돌려준다."""
-    ax, ay = a[1] * LNG_SCALE, a[0]
-    bx, by = b[1] * LNG_SCALE, b[0]
-    px, py = p[1] * LNG_SCALE, p[0]
-    dx, dy = bx - ax, by - ay
-    norm = dx * dx + dy * dy
-    t = 0.0 if norm == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / norm))
-    cx, cy = ax + t * dx, ay + t * dy
-    return 111_000 * math.hypot(px - cx, py - cy), t
-
-
-def dedupe(points: list) -> list[tuple]:
-    """연속으로 반복되는 좌표(도로 링크 경계)를 제거한다."""
-    out: list[tuple] = []
-    for lat, lng in points:
-        pt = (lat, lng)
-        if not out or out[-1] != pt:
-            out.append(pt)
-    return out
 
 
 def strand_of(route: dict) -> str:
