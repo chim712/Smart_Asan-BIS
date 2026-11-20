@@ -24,20 +24,22 @@ Smart_Asan-BIS/
 │  ├─ crawl/crawl_asan.py      # ① 수집
 │  ├─ graph/fix_shape.py       # ② 선형 꼭짓점 순서 보정
 │  ├─ graph/build_city_graph.py# ③ 시 전체 유향 도로 그래프 + 검증
-│  └─ db/schema.sql, load_graph.py  # ④ MariaDB 적재·버전 전환
+│  ├─ db/schema.sql, load_graph.py  # ④ MariaDB 적재·버전 전환
+│  └─ web/export.py            # ⑤ 활성 버전 → 웹용 정적 JSON (frontend/public/data)
 ├─ analysis/                   # 탐색·검증용 실험 코드 (core를 가져다 씀, python -m analysis.<모듈>)
 │  ├─ build_road_graph.py      # 계열별 방향 그래프 + 본선/가닥 판정
 │  ├─ draw_road_graph.py       # matplotlib 지도형·본선축 그림
 │  ├─ merge_routes.py          # 크롤링 JSON에서 노선 골라 합치기
 │  ├─ build_city_net.py        # 시 전체 무방향 노선망(시각화용, 25m snap)
 │  └─ draw_city_net.py         # 노선망 SVG (계열별 색, 공통 구간 다색 병렬)
+├─ frontend/                   # Vite + React(JS) SVG 노선망 뷰어 (권역·노선 선택, 브라우저에서 필터)
 ├─ data/snapshots/<YYYY-MM-DD>/ # raw.json, fixed.json, graph.json, report.txt (git 제외)
 ├─ .env / .env.example         # DB 접속 (.env는 git 제외)
 ├─ requirements.txt            # 파이프라인: pymysql, python-dotenv (그 외 표준 라이브러리만)
 └─ requirements-analysis.txt   # analysis용: requirements.txt + matplotlib
 ```
 
-예정: `core/graph/corridor.py`(무방향 층), `core/web/export.py`(⑤), `core/cli.py`, `backend/`, `frontend/`, `deploy/`(systemd timer, nginx), `tests/`.
+예정: `core/graph/corridor.py`(무방향 층), `core/cli.py`, `backend/`, `deploy/`(systemd timer, nginx), `tests/`.
 
 ## 실행
 
@@ -49,6 +51,8 @@ python -m core.graph.fix_shape data/snapshots/2026-12-01/raw.json data/snapshots
 python -m core.graph.build_city_graph data/snapshots/2026-12-01/fixed.json      # → 같은 폴더 graph.json
 python -m core.db.load_graph data/snapshots/2026-12-01/graph.json --dry-run   # 변경 여부만
 python -m core.db.load_graph data/snapshots/2026-12-01/graph.json             # 적재 + 전환
+python -m core.web.export                                                    # ⑤ → frontend/public/data
+npm --prefix frontend install && npm --prefix frontend run dev                 # http://localhost:5173
 ```
 
 - 스키마 초기화: `mariadb -u root -p < core/db/schema.sql` (DB `asan_bis` 생성, 다시 실행해도 안전)
@@ -60,7 +64,7 @@ python -m core.db.load_graph data/snapshots/2026-12-01/graph.json             # 
 
 ## 파이프라인 규칙
 
-1. ① 수집 → ② 보정 → ③ 빌드·검증 → ④ 적재·전환 → ⑤ 웹용 데이터 생성(예정). 월 1일 무렵 정기 실행 + 수동 실행.
+1. ① 수집 → ② 보정 → ③ 빌드·검증 → ④ 적재·전환 → ⑤ 웹용 데이터 생성. 월 1일 무렵 정기 실행 + 수동 실행.
 2. **단계 사이는 파일로 주고받는다.** 각 단계는 앞 단계 파일만 읽고 결과 파일을 쓴다. 어느 단계부터든 다시 돌릴 수 있어야 한다. ②~⑤는 `raw.json`(원본)을 수정하지 않는다(① 수집의 `--retry`만 실패 노선을 채워 넣는다).
 3. **변경 감지**: 노선별 `geom_hash`(선형·정류소) / `timetable_hash` / `info_hash`, 전체 `data_hash`. 활성 버전과 같으면 적재하지 않는다.
 4. **버전**: 그래프·노선·정류소·시간표 테이블은 모두 `version_id`를 가진다. 새 버전을 넣고 `current_version` 한 행만 바꿔 전환한다. 조회는 활성 버전만 보이는 `v_*` 뷰로 한다.
@@ -89,6 +93,8 @@ python -m core.db.load_graph data/snapshots/2026-12-01/graph.json             # 
 - DB 접속은 `pymysql.connect(**core.config.db_params())`만 쓴다. 접속 정보를 코드에 쓰지 않는다. 배포 서버는 `.env` 대신 systemd `EnvironmentFile=/etc/asanbis.env`.
 - MariaDB 공간 데이터는 WKT `POINT(lng lat)` 순서(x=경도), `ST_GeomFromText(..., 4326)`. 컬럼에 `REF_SYSTEM_ID`를 쓰지 않는다(10.11에서 문법 오류).
 - 파이프라인은 표준 라이브러리 + `pymysql`, `python-dotenv`만 쓴다. 의존성을 늘리기 전에 사용자에게 묻는다.
+- 웹 데이터(⑤)의 좌표는 `core.geo.xy` 평면 m 정수이고, 63bit ID는 JS 숫자 범위를 넘으므로 파일 안 참조는 배열 인덱스로 한다. 프론트엔드는 SVG y축을 뒤집어 쓰고, 겹치는 노선은 진행 방향 오른쪽으로 평행선을 쌓는다(상·하행이 갈라져 보임).
+- 프론트엔드 의존성은 react, react-dom, vite, @vitejs/plugin-react(버전 고정)만 쓴다. 늘리기 전에 사용자에게 묻는다.
 - 그래프 탐색은 DB(재귀 CTE)가 아니라 Python 메모리에서 한다. 데이터가 작다(구간 1,633개, 정류소 2,271개).
 - 기하 함수(거리·투영·dedupe·평면 좌표)는 `core.geo`만 쓴다(경도 환산 cos(36.78°) 한 기준). 계열 기본값·색은 `core.groups`만 쓴다(`GROUPS`는 `schema.sql`의 `route_group_def` 초기값과 같게 유지). 새 코드에 다시 정의하지 않는다.
 - 결과를 바꾸는 수정 후에는 기존 스냅샷으로 ③을 다시 돌려 요약 수치(구간 1,633 / 노드 1,055 / 정류소 2,271 / 노선-정류소 11,475, 경로 끊김 0)와 비교한다. 바뀌면 이유를 설명한다.
@@ -101,8 +107,9 @@ python -m core.db.load_graph data/snapshots/2026-12-01/graph.json             # 
 ## 다음 작업 (우선순위 순)
 
 1. `core/cli.py`(`crawl | fix | build | load | export | run-all`).
-2. ⑤ 웹용 데이터 생성 `core/web/export.py`: DB 활성 버전에서 읽어 `network.<hash>.json`(구간 좌표 3m 단순화, 약 110KB gzip), `routes.<hash>.json`(노선 → 구간 순서·정류소), `stops.<hash>.json`, `manifest.json`. nginx 정적 서빙. 필터(노선·권역·차량 노선 강조)는 브라우저에서 처리.
-3. 무방향 도로축 층(`corridor`, `corridor_segment`)과 겹침 구간 색 순서 계산.
-4. `deploy/`: systemd service + timer(월 1회, `Persistent=true`), nginx.
-5. FastAPI: 기동 시 활성 그래프 메모리 적재, 검색(정류소 `LIKE`), 실시간 위치(SSE, 캐시 5~10초, 보고 있는 노선만 폴링), 도착정보.
-6. 미해결 분석: 방향 판정, 서비스 구간(방면) 단위 정의, 손님 노선, 가닥 세분화, 공영 무정차 표현, 선형 누락 노선(650, 700·702, 41-1·46-1·46-2·47) 처리. 자세한 내용은 `docs/PROJECT_CONTEXT.md` 10장.
+2. 가닥: 관리자 테이블 `route_strand`(route_id → 가닥 이름)로 수동 지정 → export·뷰어에서 권역 노선 목록을 가닥별로 묶기. 자동 판정은 보류.
+3. 웹 뷰어 다듬기: 무방향 도로축을 쓴 개요 보기, 정류소 검색, 노선도(트리) 표기. 배포 시 nginx가 `frontend/dist` 정적 서빙.
+4. 무방향 도로축 층(`corridor`, `corridor_segment`)과 겹침 구간 색 순서 계산.
+5. `deploy/`: systemd service + timer(월 1회, `Persistent=true`), nginx.
+6. FastAPI: 기동 시 활성 그래프 메모리 적재, 검색(정류소 `LIKE`), 실시간 위치(SSE, 캐시 5~10초, 보고 있는 노선만 폴링), 도착정보.
+7. 미해결 분석: 방향 판정, 서비스 구간(방면) 단위 정의, 손님 노선, 가닥 세분화, 공영 무정차 표현, 선형 누락 노선(650, 700·702, 41-1·46-1·46-2·47) 처리. 자세한 내용은 `docs/PROJECT_CONTEXT.md` 10장.

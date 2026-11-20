@@ -1,0 +1,18 @@
+{
+  "_doc": "운수사와 번호판 블록. vehicle.classify와 DB 시드가 함께 읽는다. 블록은 동호인 자료 기반 관례이며, 정확한 소속은 vehicle_registration으로 확인한다.",
+  "companies": [
+    {"code": "ONYANG",     "name": "온양교통",   "region": "asan",    "plate_region": "72", "sort": 1, "file_keyword": "온양교통"},
+    {"code": "ASAN",       "name": "아산여객",   "region": "asan",    "plate_region": "72", "sort": 2, "file_keyword": "아산여객"},
+    {"code": "BOSEONG",    "name": "보성여객",   "region": "cheonan", "plate_region": "70", "sort": 3, "file_keyword": "보성여객"},
+    {"code": "SAMAN",      "name": "삼안여객",   "region": "cheonan", "plate_region": "70", "sort": 4, "file_keyword": "삼안여객"},
+    {"code": "SAECHEONAN", "name": "새천안교통", "region": "cheonan", "plate_region": "70", "sort": 5, "file_keyword": "새천안교통"}
+  ],
+  "ranges": [
+    {"plate_region": "72", "from": 1000, "to": 1099, "company": "ONYANG",     "note": ""},
+    {"plate_region": "72", "from": 1100, "to": 1199, "company": "ASAN",       "note": ""},
+    {"plate_region": "72", "from": 2001, "to": 2099, "company": "ONYANG",     "note": "증차분"},
+    {"plate_region": "70", "from": 1200, "to": 1399, "company": "BOSEONG",    "note": ""},
+    {"plate_region": "70", "from": 1400, "to": 1599, "company": "SAMAN",      "note": ""},
+    {"plate_region": "70", "from": 1600, "to": 1799, "company": "SAECHEONAN", "note": ""}
+  ]
+}

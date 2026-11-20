@@ -128,13 +128,21 @@
 - 기하 함수는 `core/geo.py`(경도 환산 cos(36.78°)), 계열 기본값·색은 `core/groups.py` 하나로 통합했다(2026-11-18). analysis도 이를 쓰므로 `python -m analysis.<모듈>`로 실행한다. 통합 후 ②·③과 노선망 결과는 기존 스냅샷과 완전히 같다. `build_road_graph.py`는 0.8 근사에서 cos 기준으로 바뀌어 거리 수치가 소폭 달라졌다(시 전체 상행·공영 제외 기준 구간 458개와 정류소 배정은 같고, 최대 투영거리만 345.4m → 344.1m).
 - 의존성: `requirements.txt`(파이프라인: PyMySQL, python-dotenv), `requirements-analysis.txt`(+ matplotlib).
 
-### 웹 렌더링 데이터 (결정, 미구현)
+### 웹 렌더링 데이터 (2026-11-18 구현)
 
 - DB 적재·전환 뒤 ⑤단계에서 **활성 버전을 DB에서 읽어** 웹용 정적 파일을 만든다: `network.<hash>.json`(구간 좌표 3m 단순화), `routes.<hash>.json`(노선 → 구간 순서, 정류소, 계열), `stops.<hash>.json`, `manifest.json`. 해시 파일명으로 캐시 문제를 없애고 nginx가 바로 서빙한다.
 - 측정: 구간 좌표 26,825점 → 3m 단순화 13,135점, 노선 색인 포함 493KB, gzip 110KB. 시 전체를 한 번에 내려받아도 된다.
 - 권역·노선 선택, 차량 노선만 강조 같은 필터는 브라우저가 노선 → 구간 색인으로 처리한다(서버 호출 없음). 실시간 메시지는 `route_id`, 차량, 최근 정류소만 보낸다.
 - 겹침 구간 색 순서, 무방향 도로축 층 계산은 ⑤에서 오프라인으로 한다.
 - 검색은 DB에서 정류소명 `LIKE '%검색어%'`(2,271건이라 충분). MariaDB FULLTEXT는 한국어 부분 일치에 약하다.
+- **구현**: `core/web/export.py`가 활성 버전 뷰를 읽어 `frontend/public/data/`에 쓴다. 좌표는 `core.geo.xy` 평면 m 정수(원점 36.78N 127.0E), 구간 좌표 RDP 3m(`core.geo.simplify`) → 13,830점. 실측: network 414KB(gzip 142KB), routes 261KB(36KB), stops 147KB(34KB). network가 예상보다 큰 것은 문자열 ID·노선 색인을 함께 넣었기 때문이다. 출력은 결정적이라 같은 활성 버전이면 해시 파일명이 같다.
+- **뷰어**(`frontend/`, Vite + React JS, 배경 지도 없는 SVG): 휠·버튼 확대, 끌어서 이동, 더블클릭 전체 보기. 기본망은 운행횟수 √ 굵기의 회색 선.
+  - 권역 선택(복수): 선택 계열 노선이 지나는 구간만 계열 색으로 강조, 굵기는 그 계열 운행 합 √. 공영 제외 옵션. 선택 부분 그래프의 분기(out>1)·합류(in>1) 점과 요약(구간, 총연장, 분기·합류 수).
+  - 권역 노선 목록: 권역을 고르면 그 계열 노선 카드(번호, 기점↔종점, 평일 운행 합, 공영 표시)가 검색 없이 뜬다. 시내·순환을 먼저, 공영을 뒤에 둔다. 누르면 선택·해제되고, 마우스를 올리면 지도에 검은 선으로 미리 보인다. 권역을 여러 개 고르면 계열별 소제목으로 나뉜다.
+  - 노선 선택(번호 부분 일치 검색, 복수): 노선명마다 색, 상·하행(route_id)별 켜고 끄기, 표기는 "기점 → 종점". 진행 방향 화살표, 정류소(확대 시 중간 정류소·이름), 평일 운행·첫차·막차·정류소 수·길이.
+  - 겹치는 줄은 진행 방향 오른쪽으로 차례로 쌓는다. 유향 그래프라 상·하행 구간이 도로 양쪽으로 갈라져 보이고, 같은 구간을 지나는 노선이 나란히 놓여 400·430·450의 단축·연장 관계가 드러난다.
+  - 선택 상태는 URL 해시(`#g=4,6&r=450&p=1&n=0`)에 남는다. 모바일 폭(720px 이하)은 지도 위·패널 아래 배치.
+  - 한계: 구간 툴팁은 가운데 선 기준이라 오프셋된 줄 위에서는 옆 구간이 잡힐 수 있다. 개요용 무방향 도로축은 아직 없다.
 
 ### 아키텍처 (초안)
 
@@ -298,6 +306,8 @@
 | `core/db/schema.sql` | MariaDB 스키마. 버전 테이블, 그래프·노선·정류소·시간표, 관리자 계열 테이블, 활성 버전 뷰(`v_route`, `v_segment`, `v_node`, `v_stop`, `v_route_segment`, `v_route_stop`, `v_route_timetable`) | 사용 중 |
 | `core/db/load_graph.py` | ④ MariaDB 적재. 변경 없으면 건너뜀, 치명적 이슈면 거부, 새 버전 적재 후 전환, `current_version` 기준으로 오래된 버전 정리 | 사용 중. Windows MariaDB에서 시험(2026-11-18) |
 | `core/config.py` | `.env`/환경변수 → DB 접속, 경로 상수 | 사용 중 |
+| `core/web/export.py` | ⑤ 활성 버전 → 웹용 JSON(network/routes/stops + manifest) | 신규(2026-11-18) |
+| `frontend/` | Vite + React(JS) SVG 노선망 뷰어. 권역·노선 선택 | 신규(2026-11-18) |
 | `core/geo.py` | 기하 공통: `xy`/`ll`(평면 좌표), `dist_m`, `project`, `dedupe`, `length_m` | 신규(2026-11-18) |
 | `core/groups.py` | `default_group()`(번호 규칙 기본 계열), `GROUPS`(계열 이름·색, `route_group_def`와 동일) | 신규(2026-11-18) |
 | `analysis/build_road_graph.py` | 방향별 도로 그래프 빌더 + 본선·가닥. `--direction`(원본 `route_direction` 기준), `--exclude-types 101`, `--exclude-routes`, `--merge-below 30` | 검증용 |
@@ -359,7 +369,8 @@ python -m analysis.draw_road_graph asan_series_all_road_dir1.json --axis 451
 ### 구조
 
 1. **시 전체 그래프 빌드**: 완료(유향 그래프 + MariaDB 적재, `core.geo`·`core.groups` 통합, 스냅샷 폴더 자동 생성). 남은 것: `core/cli.py`(run-all), 유향 구간 ↔ 무방향 도로축(`corridor`) 대응표, 월 1회 systemd timer.
-1-1. **⑤ 웹용 데이터 생성**(`core/web/export.py`): 위 "웹 렌더링 데이터" 결정대로.
+1-2. **가닥 지정**: 관리자 테이블 `route_strand`(route_id → 가닥 이름, 버전 무관)로 수동 지정하고 export·뷰어에서 권역 노선 목록을 가닥별로 묶는다. 자동 판정(6장 "본선과 가닥")은 `route_direction`에 의존하고 하행·다발형에서 한계가 있어 보류했다(2026-11-18).
+1-1. **⑤ 웹용 데이터 생성·뷰어**: 완료(`core/web/export.py`, `frontend/`). 남은 것: 무방향 도로축 개요 보기, 정류소 검색, 노선도(트리) 표기, nginx 배포.
 2. **FastAPI 쪽**: 기동 시 활성 버전 그래프를 메모리에 올리기, 노선별·권역별·범위별 조회 API, 클라이언트 전송 형식(구간 좌표 압축 등).
 3. **방향 판정**: `route_direction` 대신 도심 허브 기준으로 상행·하행을 판정한다.
 4. **서비스 구간(방면) 단위 정의**: 번호 계열을 대체할 기본 단위를 어떻게 정의하고 자동 추출할지 정한다. 가장 큰 미결 사항이다.

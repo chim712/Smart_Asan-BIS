@@ -1,0 +1,19 @@
+{
+  "_doc": "차종(model_family) - 연료(fuel) - 제작연도(year_from~year_to) → 도색기 아이콘 키. null = 무관. 여러 규칙이 맞으면 조건을 많이 채운 것, 같으면 rule_id가 작은 것. 맞는 규칙이 없으면 size_default.",
+  "rules": [
+    {"rule_id": 1,  "family": "일렉시티",                  "fuel": null, "year_from": null, "year_to": null, "icon": "elec_A",             "note": "윗면 도색은 1A로 고정(2026-11-20)"},
+    {"rule_id": 2,  "family": "일렉시티Ⅱ",                 "fuel": null, "year_from": null, "year_to": null, "icon": "elec_A",             "note": "윗면 도색은 1A로 고정(2026-11-20)"},
+    {"rule_id": 3,  "family": "뉴슈퍼에어로시티 F/L",      "fuel": null, "year_from": null, "year_to": null, "icon": "greencity_aerocity", "note": ""},
+    {"rule_id": 4,  "family": "그린시티",                  "fuel": null, "year_from": null, "year_to": null, "icon": "greencity_aerocity", "note": ""},
+    {"rule_id": 5,  "family": "뉴슈퍼에어로시티 F/L 저상", "fuel": null, "year_from": null, "year_to": null, "icon": "aerocity_low_A",     "note": ""},
+    {"rule_id": 6,  "family": "뉴 E-화이버드",             "fuel": null, "year_from": null, "year_to": null, "icon": "fibird",             "note": "FL 이전(2019.5~2021.6). 모델명 우선"},
+    {"rule_id": 7,  "family": "스마트 110",                "fuel": null, "year_from": null, "year_to": null, "icon": "smart110",           "note": "1차 FL(2021.7~)"},
+    {"rule_id": 8,  "family": "KG C110",                   "fuel": null, "year_from": null, "year_to": null, "icon": "c090_c110",          "note": ""},
+    {"rule_id": 9,  "family": "KG C090",                   "fuel": null, "year_from": null, "year_to": null, "icon": "c090_c110",          "note": ""}
+  ],
+  "size_default": {
+    "_doc": "아이콘이 아직 없는 차종(카운티, 유니버스, 쏠라티, 자일대우 등)의 임시 아이콘",
+    "large": "greencity_aerocity", "mid": "greencity_aerocity", "small": "greencity_aerocity",
+    "coach": "greencity_aerocity", "van": "greencity_aerocity", "minivan": "greencity_aerocity"
+  }
+}

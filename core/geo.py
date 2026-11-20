@@ -50,6 +50,30 @@ def dedupe(points) -> list[tuple]:
     return out
 
 
+def simplify(P, tol_m: float) -> list:
+    """평면 좌표 점열 P를 Ramer–Douglas–Peucker로 단순화한다(양 끝점 유지, 재귀 없이)."""
+    if len(P) < 3:
+        return list(P)
+    keep = [False] * len(P)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(P) - 1)]
+    while stack:
+        i, j = stack.pop()
+        (ax, ay), (bx, by) = P[i], P[j]
+        dx, dy = bx - ax, by - ay
+        L = math.hypot(dx, dy)
+        best, k = -1.0, -1
+        for m in range(i + 1, j):
+            px, py = P[m]
+            d = abs((px - ax) * dy - (py - ay) * dx) / L if L else math.hypot(px - ax, py - ay)
+            if d > best:
+                best, k = d, m
+        if k >= 0 and best > tol_m:
+            keep[k] = True
+            stack += [(i, k), (k, j)]
+    return [p for p, f in zip(P, keep) if f]
+
+
 def length_m(points) -> float:
     """점열 길이(m)."""
     return sum(dist_m(a, b) for a, b in zip(points, points[1:]))
