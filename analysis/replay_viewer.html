@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Smart Asan BIS — 실시간 위치 재생</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --panel: 340px; --bg: #f6f6f4; --ink: #1f2328; --mute: #6b7280; --line: #e5e7eb;
+          --asan: #1c7ed6; --cheonan: #e8590c; --bad: #e03131; --ok: #2f9e44; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 13px/1.45 system-ui, -apple-system, "Malgun Gothic", sans-serif; color: var(--ink); }
+  body { display: flex; }
+  #map { flex: 1; position: relative; background: var(--bg); overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.drag { cursor: grabbing; }
+  #panel { width: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; background: #fff; }
+  .sec { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .sec h3 { margin: 0 0 6px; font-size: 12px; color: var(--mute); font-weight: 600; }
+  #clock { font-size: 26px; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: .5px; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  button, select { font: inherit; padding: 3px 9px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #f1f3f5; }
+  button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  input[type=range] { width: 100%; }
+  label.ck { display: flex; gap: 6px; align-items: center; cursor: pointer; padding: 1px 0; }
+  .sw { display: inline-block; width: 12px; height: 4px; border-radius: 2px; }
+  .scroll { overflow: auto; }
+  #vehList { flex: 1; min-height: 120px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 3px 4px; border-bottom: 1px solid #f1f3f5; white-space: nowrap; }
+  tr.v { cursor: pointer; }
+  tr.v:hover { background: #f8f9fa; }
+  tr.sel { background: #fff3bf !important; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; }
+  .tag { font-size: 11px; padding: 0 5px; border-radius: 3px; background: #f1f3f5; color: #495057; }
+  .tag.bad { background: #ffe3e3; color: var(--bad); }
+  .tag.hold { background: #fff4e6; color: #d9480f; }
+  .tag.stop { background: #e7f5ff; color: #1971c2; }
+  #detail { font-size: 12px; }
+  #detail .k { color: var(--mute); display: inline-block; width: 74px; }
+  #detail a { color: #1971c2; }
+  .bm { cursor: pointer; padding: 3px 0; border-bottom: 1px dashed #eee; font-size: 12px; }
+  .bm:hover { color: #1971c2; }
+  #legend { position: absolute; left: 10px; bottom: 10px; background: rgba(255,255,255,.92); border: 1px solid var(--line);
+            border-radius: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.7; pointer-events: none; }
+  #hint { position: absolute; right: 10px; top: 10px; background: rgba(255,255,255,.9); border: 1px solid var(--line);
+          border-radius: 6px; padding: 4px 8px; font-size: 11px; color: var(--mute); }
+  #empty { padding: 40px; color: var(--mute); }
+</style>
+</head>
+<body>
+<div id="map">
+  <canvas id="cv"></canvas>
+  <div id="hint">끌기: 이동 · 휠: 확대 · 더블클릭: 전체 · 스페이스: 재생 · ←/→: 15초</div>
+  <div id="legend">
+    <div><span class="dot" style="background:var(--asan)"></span> 아산 차량 &nbsp; <span class="dot" style="background:var(--cheonan)"></span> 천안 차량</div>
+    <div>● 실선 테두리: GPS 채택 &nbsp; ◌ 점선: 직전 위치 유지 &nbsp; ◉ 굵은 테두리: 정류소 기준</div>
+    <div>■ 네모: 기점·종점 대기 &nbsp; 흐림: 60초 넘게 새 정보 없음</div>
+    <div>× 원시 GPS (회색: 30m 이내, <span style="color:#f59f00">주황: 30~80m 붙임</span>, <span style="color:var(--bad)">빨강: 버림</span>)</div>
+    <div><span style="color:var(--bad)">◌ 빨간 점선 고리 + "GPS 위치 오류"</span>: 80m 밖 3회 연속, 원시 위치에 표시</div>
+  </div>
+</div>
+<div id="panel">
+  <div class="sec">
+    <div class="row" style="justify-content:space-between">
+      <div id="clock">--:--:--</div>
+      <div class="row">
+        <button id="play">▶ 재생</button>
+        <select id="speed">
+          <option value="1">×1</option><option value="5">×5</option><option value="10" selected>×10</option>
+          <option value="30">×30</option><option value="60">×60</option><option value="120">×120</option>
+        </select>
+      </div>
+    </div>
+    <input id="seek" type="range" min="0" max="1" step="1" value="0">
+    <div class="row" style="justify-content:space-between;color:var(--mute);font-size:11px"><span id="tStart"></span><span id="src"></span><span id="tEnd"></span></div>
+  </div>
+  <div class="sec">
+    <div class="row">
+      <label class="ck"><input type="checkbox" id="optRaw" checked> 원시 GPS</label>
+      <label class="ck"><input type="checkbox" id="optLabel" checked> 차량 번호</label>
+      <label class="ck"><input type="checkbox" id="optStopName"> 정류소명</label>
+      <label class="ck"><input type="checkbox" id="optTrail" checked> 선택 차량 궤적(10분)</label>
+      <label class="ck"><input type="checkbox" id="optFollow" checked> 선택 차량 따라가기</label>
+    </div>
+  </div>
+  <div class="sec scroll" style="max-height:150px">
+    <h3>노선 (방향별)</h3>
+    <div id="routeList"></div>
+  </div>
+  <div class="sec" id="detailSec" style="display:none">
+    <h3>선택 차량</h3>
+    <div id="detail"></div>
+  </div>
+  <div class="sec scroll" style="max-height:170px">
+    <h3>책갈피: 좌표가 3회 이상 연달아 버려진 장면</h3>
+    <div id="bmList"></div>
+  </div>
+  <div class="sec scroll" id="vehList">
+    <h3>현재 차량 <span id="vehCount"></span></h3>
+    <table id="vehTable"></table>
+  </div>
+</div>
+<script>
+const DATA = /*__REPLAY_DATA__*/null;
+(function () {
+  "use strict";
+  if (!DATA) {
+    document.getElementById("map").innerHTML = '<div id="empty">데이터가 없습니다. analysis/replay_locate.py로 replay.html을 만들어 여세요.</div>';
+    return;
+  }
+  const F = Object.fromEntries(DATA.meta.fields.map((k, i) => [k, i]));
+  const STATES = DATA.meta.states, SOURCES = DATA.meta.sources, CHECKS = DATA.meta.checks;
+  const STATE_KO = { running: "운행", at_stop: "정류소 정차", origin_wait: "기점 대기", terminal_wait: "종점 대기", unknown: "알 수 없음",
+                     off_route: "GPS 위치 오류" };
+  const SRC_KO = { gps: "GPS", stop: "정류소", hold: "유지", none: "-", raw: "원시" };
+  const CHECK_KO = { ok: "채택", snapped: "붙임(30~80m)", "lat=lng": "lat=lng", parked: "정차 반경", off_road: "도로 밖", out_of_window: "구간 밖",
+                     backward: "뒤로 감", no_coord: "좌표 없음", out_of_range: "범위 밖", stop_unmapped: "정류소 매핑 실패", route_unknown: "노선 없음" };
+  const BAD = new Set(["off_road", "out_of_window", "backward", "out_of_range"]);
+  const HIDE_AFTER = 60;          // 마지막 관측 뒤 이 시간(초)이 지나면 화면에서 뺀다
+  const TRAIL = 600;              // 궤적 길이(초)
+  const T0 = DATA.meta.t0;
+  const frames = DATA.frames;
+  const tMax = frames.length ? frames[frames.length - 1][F.t] : 0;
+
+  // 차량별 프레임 색인 (시간순)
+  const byVeh = DATA.vehicles.map(() => []);
+  frames.forEach((fr, i) => byVeh[fr[F.veh]].push(i));
+
+  // 좌표계: 기준 위도 평면 근사 (m)
+  const LAT0 = 36.78, KX = 111320 * Math.cos(LAT0 * Math.PI / 180), KY = 110574;
+  const px = (lng) => lng * KX, py = (lat) => -lat * KY;
+
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  let W = 0, H = 0, DPR = window.devicePixelRatio || 1;
+  let view = { s: 0.05, ox: 0, oy: 0 };   // 화면 = (월드 - o) * s
+  const routeOn = DATA.routes.map(() => true);
+  let now = 0, playing = false, selected = null, lastTick = null;
+
+  const $ = (id) => document.getElementById(id);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const fmt = (t) => { const d = new Date((T0 + t) * 1000); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
+  const opt = (id) => $(id).checked;
+
+  function resize() {
+    const r = $("map").getBoundingClientRect();
+    W = r.width; H = r.height;
+    cv.width = W * DPR; cv.height = H * DPR;
+    draw();
+  }
+  function fit(boxes) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [lat, lng] of boxes) { const x = px(lng), y = py(lat); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    if (!isFinite(x0)) return;
+    const pad = 40;
+    view.s = Math.min((W - 2 * pad) / Math.max(1, x1 - x0), (H - 2 * pad) / Math.max(1, y1 - y0));
+    view.ox = (x0 + x1) / 2 - W / 2 / view.s;
+    view.oy = (y0 + y1) / 2 - H / 2 / view.s;
+  }
+  function fitAll() { fit(DATA.routes.filter((_, i) => routeOn[i]).flatMap(r => r.line)); draw(); }
+  const sx = (lng) => (px(lng) - view.ox) * view.s, sy = (lat) => (py(lat) - view.oy) * view.s;
+
+  // 시각 t의 차량 상태: t 이하 마지막 프레임
+  function frameAt(v, t) {
+    const idx = byVeh[v];
+    let lo = 0, hi = idx.length - 1, ans = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (frames[idx[m]][F.t] <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
+    return ans < 0 ? null : { k: ans, fr: frames[idx[ans]] };
+  }
+  function visible(t) {
+    const out = [];
+    DATA.vehicles.forEach((_, v) => {
+      const r = frameAt(v, t);
+      if (r && t - r.fr[F.t] <= HIDE_AFTER && routeOn[r.fr[F.route]]) out.push({ v, ...r });
+    });
+    return out;
+  }
+
+  function draw() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const cur = visible(now);
+    const selFr = selected != null ? cur.find(c => c.v === selected) : null;
+    if (selFr && opt("optFollow") && playing) {
+      view.ox = px(selFr.fr[F.lng]) - W / 2 / view.s;
+      view.oy = py(selFr.fr[F.lat]) - H / 2 / view.s;
+    }
+    // 노선
+    DATA.routes.forEach((r, i) => {
+      if (!routeOn[i]) return;
+      const hot = selFr && selFr.fr[F.route] === i;
+      ctx.strokeStyle = r.color; ctx.globalAlpha = hot ? 0.95 : 0.45; ctx.lineWidth = hot ? 4 : 2;
+      ctx.beginPath();
+      r.line.forEach(([lat, lng], j) => { const x = sx(lng), y = sy(lat); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+    // 정류소
+    const showStops = view.s > 0.08, showNames = opt("optStopName") && view.s > 0.35;
+    if (showStops) {
+      ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "middle";
+      const seen = new Set();
+      DATA.routes.forEach((r, i) => {
+        if (!routeOn[i]) return;
+        r.stops.forEach(([nm, lat, lng]) => {
+          const x = sx(lng), y = sy(lat);
+          if (x < -20 || y < -20 || x > W + 20 || y > H + 20) return;
+          ctx.fillStyle = "#fff"; ctx.strokeStyle = r.color; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill(); ctx.stroke();
+          const key = nm + Math.round(x / 30) + "," + Math.round(y / 14);
+          if (showNames && !seen.has(key)) { seen.add(key); ctx.fillStyle = "#495057"; ctx.fillText(nm, x + 5, y); }
+        });
+      });
+    }
+    // 선택 차량 궤적
+    if (selected != null && opt("optTrail")) {
+      const idx = byVeh[selected];
+      const pts = idx.map(i => frames[i]).filter(fr => fr[F.t] <= now && now - fr[F.t] <= TRAIL);
+      ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 2; ctx.setLineDash([]);
+      ctx.beginPath(); pts.forEach((fr, j) => { const x = sx(fr[F.lng]), y = sy(fr[F.lat]); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      const raw = pts.filter(fr => fr[F.raw_lat] != null);
+      ctx.strokeStyle = "rgba(224,49,49,.5)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); raw.forEach((fr, j) => { const x = sx(fr[F.raw_lng]), y = sy(fr[F.raw_lat]); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      ctx.setLineDash([]);
+      raw.forEach(fr => {
+        ctx.fillStyle = BAD.has(CHECKS[fr[F.check]]) ? "#e03131" : "#2f9e44";
+        ctx.beginPath(); ctx.arc(sx(fr[F.raw_lng]), sy(fr[F.raw_lat]), 2.5, 0, 7); ctx.fill();
+      });
+    }
+    // 차량
+    ctx.font = "bold 11px system-ui, sans-serif"; ctx.textBaseline = "bottom";
+    for (const c of cur) {
+      const fr = c.fr, vi = DATA.vehicles[c.v];
+      const x = sx(fr[F.lng]), y = sy(fr[F.lat]);
+      const st = STATES[fr[F.state]], src = SOURCES[fr[F.source]], chk = CHECKS[fr[F.check]];
+      if (st === "off_route") {
+        // 경로 이탈: 원시 좌표에 그대로 표시하고 "GPS 위치 오류"라고 적는다
+        ctx.fillStyle = vi.region === "cheonan" ? "#e8590c" : "#1c7ed6";
+        ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fill();
+        ctx.strokeStyle = "#e03131"; ctx.lineWidth = 2.5; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+        if (c.v === selected) { ctx.strokeStyle = "#f59f00"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 15, 0, 7); ctx.stroke(); }
+        ctx.fillStyle = "#e03131";
+        ctx.fillText(`${vi.no} ${DATA.routes[fr[F.route]].name} · GPS 위치 오류`, x + 13, y - 6);
+        continue;
+      }
+      if (opt("optRaw") && fr[F.raw_lat] != null) {
+        const rx = sx(fr[F.raw_lng]), ry = sy(fr[F.raw_lat]);
+        const bad = BAD.has(chk);
+        ctx.strokeStyle = bad ? "#e03131" : chk === "snapped" ? "#f59f00" : "#868e96"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(rx, ry); ctx.stroke();
+        ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(rx - 4, ry - 4); ctx.lineTo(rx + 4, ry + 4); ctx.moveTo(rx + 4, ry - 4); ctx.lineTo(rx - 4, ry + 4); ctx.stroke();
+      }
+      const stale = fr[F.info_age] >= 60 && st === "running";
+      ctx.globalAlpha = stale ? 0.45 : 1;
+      ctx.fillStyle = vi.region === "cheonan" ? "#e8590c" : "#1c7ed6";
+      ctx.strokeStyle = src === "stop" ? "#111" : "#fff";
+      ctx.lineWidth = src === "stop" ? 3 : 2;
+      ctx.setLineDash(src === "hold" ? [3, 2] : []);
+      if (src === "hold") ctx.strokeStyle = "#111";
+      ctx.beginPath();
+      if (st === "origin_wait" || st === "terminal_wait") ctx.rect(x - 6, y - 6, 12, 12); else ctx.arc(x, y, 7, 0, 7);
+      ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+      if (c.v === selected) { ctx.strokeStyle = "#f59f00"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.stroke(); }
+      if (opt("optLabel")) {
+        ctx.fillStyle = "#212529";
+        ctx.fillText(`${vi.no} ${DATA.routes[fr[F.route]].name}`, x + 9, y - 4);
+      }
+      ctx.globalAlpha = 1;
+    }
+    $("clock").textContent = fmt(now);
+    $("seek").value = Math.round(now);
+    renderTable(cur);
+    renderDetail(cur);
+  }
+
+  // 패널
+  function renderRoutes() {
+    $("routeList").innerHTML = DATA.routes.map((r, i) =>
+      `<label class="ck"><input type="checkbox" data-r="${i}" checked><span class="sw" style="background:${r.color}"></span>${r.label}</label>`).join("");
+    $("routeList").querySelectorAll("input").forEach(el => el.addEventListener("change", () => { routeOn[+el.dataset.r] = el.checked; draw(); }));
+  }
+  function tag(src, chk) {
+    if (src === "raw") return '<span class="tag bad">원시 위치</span>';
+    const cls = BAD.has(chk) ? "bad" : src === "hold" ? "hold" : src === "stop" ? "stop" : "";
+    return `<span class="tag ${cls}">${SRC_KO[src]}${BAD.has(chk) ? "·" + CHECK_KO[chk] : ""}</span>`;
+  }
+  let lastTableKey = "";
+  function renderTable(cur) {
+    const rows = cur.map(c => ({ c, vi: DATA.vehicles[c.v], r: DATA.routes[c.fr[F.route]] }))
+      .sort((a, b) => a.r.label.localeCompare(b.r.label) || b.c.fr[F.stop_idx] - a.c.fr[F.stop_idx]);
+    const key = rows.map(o => o.c.v + ":" + o.c.k).join(",") + "|" + selected;
+    if (key === lastTableKey) return;
+    lastTableKey = key;
+    $("vehCount").textContent = `(${rows.length})`;
+    $("vehTable").innerHTML = rows.map(({ c, vi, r }) => {
+      const fr = c.fr, src = SOURCES[fr[F.source]], chk = CHECKS[fr[F.check]];
+      const stopNm = r.stops[fr[F.stop_idx]] ? r.stops[fr[F.stop_idx]][0] : "";
+      return `<tr class="v ${c.v === selected ? "sel" : ""}" data-v="${c.v}">
+        <td><span class="dot" style="background:${vi.region === "cheonan" ? "var(--cheonan)" : "var(--asan)"}"></span> ${vi.no}</td>
+        <td><span class="sw" style="background:${r.color}"></span> ${r.name}</td>
+        <td title="${stopNm}">${stopNm.slice(0, 9)}</td>
+        <td>${STATE_KO[STATES[fr[F.state]]] === "운행" ? "" : STATE_KO[STATES[fr[F.state]]]}</td>
+        <td>${tag(src, chk)}</td>
+        <td style="color:var(--mute)">${Math.round(fr[F.info_age])}s</td></tr>`;
+    }).join("");
+    $("vehTable").querySelectorAll("tr.v").forEach(tr => tr.addEventListener("click", () => select(+tr.dataset.v, true)));
+  }
+  function kakao(label, lat, lng) {
+    return `https://map.kakao.com/link/map/${encodeURIComponent(label)},${lat},${lng}`;
+  }
+  let lastDetailKey = "";
+  function renderDetail(cur) {
+    if (selected == null) { $("detailSec").style.display = "none"; lastDetailKey = ""; return; }
+    const vi = DATA.vehicles[selected];
+    const c = cur.find(o => o.v === selected);
+    const key = selected + ":" + (c ? c.k : "x");
+    if (key === lastDetailKey) return;      // 프레임이 바뀔 때만 다시 그림(링크 클릭이 가능하도록)
+    lastDetailKey = key;
+    $("detailSec").style.display = "";
+    if (!c) { $("detail").innerHTML = `<b>${vi.plate || vi.no}</b> · ${vi.company || "?"}<br><span style="color:var(--mute)">지금 화면에 없음</span>`; return; }
+    const fr = c.fr, r = DATA.routes[fr[F.route]];
+    const chk = CHECKS[fr[F.check]];
+    const raw = fr[F.raw_lat] != null
+      ? `${fr[F.raw_lat].toFixed(6)}, ${fr[F.raw_lng].toFixed(6)} <a href="${kakao(vi.no + " 원시", fr[F.raw_lat], fr[F.raw_lng])}" target="_blank" rel="noopener">카카오맵</a>`
+      : "없음";
+    $("detail").innerHTML = `
+      <div><b>${vi.plate || vi.no}</b> · ${vi.company || "?"} ${vi.low ? "· 저상" : ""}</div>
+      <div><span class="k">노선</span>${r.label}</div>
+      <div><span class="k">상태</span>${STATE_KO[STATES[fr[F.state]]]} · 근거 ${SRC_KO[SOURCES[fr[F.source]]]}</div>
+      <div><span class="k">표시 정류소</span>${(r.stops[fr[F.stop_idx]] || ["?"])[0]} (${fr[F.stop_idx]})</div>
+      <div><span class="k">보고 정류소</span>${(r.stops[fr[F.reported_idx]] || ["?"])[0]} (${fr[F.reported_idx]})</div>
+      <div><span class="k">좌표 판정</span>${CHECK_KO[chk] || chk}${fr[F.raw_dist] != null ? ` · 선형까지 ${fr[F.raw_dist]}m` : ""}</div>
+      <div><span class="k">원시 GPS</span>${raw}</div>
+      <div><span class="k">표시 위치</span>${fr[F.lat].toFixed(6)}, ${fr[F.lng].toFixed(6)} <a href="${kakao(vi.no + " 표시", fr[F.lat], fr[F.lng])}" target="_blank" rel="noopener">카카오맵</a></div>
+      <div><span class="k">관측 시각</span>${fmt(fr[F.t])} · 새 정보 ${Math.round(fr[F.info_age])}초 전</div>
+      <div style="margin-top:4px"><button id="unsel">선택 해제</button></div>`;
+    $("unsel").onclick = () => { selected = null; lastTableKey = ""; lastDetailKey = ""; draw(); };
+  }
+  function renderBookmarks() {
+    if (!DATA.bookmarks.length) { $("bmList").innerHTML = '<span style="color:var(--mute)">없음</span>'; return; }
+    $("bmList").innerHTML = DATA.bookmarks.map((b, i) => {
+      const vi = DATA.vehicles[b.veh], r = b.route != null ? DATA.routes[b.route] : null;
+      return `<div class="bm" data-i="${i}">${fmt(b.t).slice(0, 8)}~${fmt(b.t1).slice(0, 8)} · <b>${vi.no}</b> ${r ? r.name : ""} ${b.stop} · ${CHECK_KO[b.check] || b.check} ${b.n}회</div>`;
+    }).join("");
+    $("bmList").querySelectorAll(".bm").forEach(el => el.addEventListener("click", () => {
+      const b = DATA.bookmarks[+el.dataset.i];
+      if (b.route != null && !routeOn[b.route]) { routeOn[b.route] = true; renderRoutes(); }
+      now = Math.max(0, b.t - 60);
+      setPlaying(false);
+      select(b.veh, true, 0.6);
+    }));
+  }
+  function select(v, center, scale) {
+    selected = v; lastTableKey = "";
+    const r = frameAt(v, now);
+    if (center && r) {
+      if (scale) view.s = scale;
+      view.ox = px(r.fr[F.lng]) - W / 2 / view.s;
+      view.oy = py(r.fr[F.lat]) - H / 2 / view.s;
+    }
+    draw();
+  }
+
+  // 재생
+  function setPlaying(p) {
+    playing = p; $("play").textContent = p ? "❚❚ 정지" : "▶ 재생"; $("play").classList.toggle("on", p);
+    lastTick = null;
+    if (p) requestAnimationFrame(tick);
+  }
+  function tick(ts) {
+    if (!playing) return;
+    if (lastTick != null) {
+      now += (ts - lastTick) / 1000 * +$("speed").value;
+      if (now >= tMax) { now = tMax; setPlaying(false); }
+    }
+    lastTick = ts;
+    draw();
+    if (playing) requestAnimationFrame(tick);
+  }
+
+  // 입력
+  $("play").onclick = () => setPlaying(!playing);
+  $("seek").max = Math.ceil(tMax);
+  $("seek").oninput = (e) => { now = +e.target.value; draw(); };
+  ["optRaw", "optLabel", "optStopName", "optTrail", "optFollow"].forEach(id => $(id).addEventListener("change", draw));
+  window.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") return;
+    if (e.code === "Space") { e.preventDefault(); setPlaying(!playing); }
+    if (e.code === "ArrowRight") { now = Math.min(tMax, now + 15); draw(); }
+    if (e.code === "ArrowLeft") { now = Math.max(0, now - 15); draw(); }
+  });
+  let drag = null;
+  cv.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy, moved: false }; cv.classList.add("drag"); });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    view.ox = drag.ox - dx / view.s; view.oy = drag.oy - dy / view.s; draw();
+  });
+  window.addEventListener("mouseup", (e) => {
+    if (drag && !drag.moved) {   // 클릭: 가까운 차량 선택
+      const rect = cv.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      let best = null, bd = 14;
+      for (const c of visible(now)) {
+        const d = Math.hypot(sx(c.fr[F.lng]) - mx, sy(c.fr[F.lat]) - my);
+        if (d < bd) { bd = d; best = c.v; }
+      }
+      if (best != null) select(best, false);
+    }
+    drag = null; cv.classList.remove("drag");
+  });
+  cv.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = cv.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const wx = view.ox + mx / view.s, wy = view.oy + my / view.s;
+    view.s *= Math.exp(-e.deltaY * 0.0015);
+    view.s = Math.min(Math.max(view.s, 0.005), 20);
+    view.ox = wx - mx / view.s; view.oy = wy - my / view.s;
+    draw();
+  }, { passive: false });
+  cv.addEventListener("dblclick", fitAll);
+  window.addEventListener("resize", resize);
+
+  $("tStart").textContent = fmt(0); $("tEnd").textContent = fmt(tMax);
+  $("src").textContent = `관측 ${frames.length.toLocaleString()}건 · 차량 ${DATA.vehicles.length}대`;
+  renderRoutes(); renderBookmarks();
+  resize(); fitAll();
+})();
+</script>
+</body>
+</html>

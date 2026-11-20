@@ -1,0 +1,21 @@
+{
+  "_doc": "원문 모델 표기 → 차종(model_family). 위에서부터 처음 맞는 규칙을 쓴다(저상 에어로시티, 일렉시티Ⅱ처럼 긴 것을 먼저). 연료는 parse_fleet.FUEL_RULES로 따로 정한다. low_floor: 모델 기본값(null = 연료별 low_floor_by_fuel 또는 모름).",
+  "families": [
+    {"match": "저상\\s*뉴슈퍼에어로시티", "family": "뉴슈퍼에어로시티 F/L 저상", "slug": "nsac_fl_low", "maker": "현대",       "size": "large",   "low_floor": true},
+    {"match": "뉴슈퍼에어로시티|NSAC",   "family": "뉴슈퍼에어로시티 F/L",      "slug": "nsac_fl",     "maker": "현대",       "size": "large",   "low_floor": false},
+    {"match": "일렉시티\\s*(Ⅱ|II|2)",     "family": "일렉시티Ⅱ",                "slug": "elecity2",    "maker": "현대",       "size": "large",   "low_floor": true},
+    {"match": "일렉시티",                 "family": "일렉시티",                  "slug": "elecity",     "maker": "현대",       "size": "large",   "low_floor": true},
+    {"match": "그린시티",                 "family": "그린시티",                  "slug": "greencity",   "maker": "현대",       "size": "mid",     "low_floor": false},
+    {"match": "E-?화이버드",              "family": "뉴 E-화이버드",             "slug": "fibird",      "maker": "에디슨모터스", "size": "large",  "low_floor": true},
+    {"match": "스마트\\s*110",            "family": "스마트 110",                "slug": "smart110",    "maker": "KGM커머셜",  "size": "large",   "low_floor": true},
+    {"match": "KG\\s*C110",               "family": "KG C110",                   "slug": "kgc110",      "maker": "KGM커머셜",  "size": "large",   "low_floor": true},
+    {"match": "KG\\s*C090",               "family": "KG C090",                   "slug": "kgc090",      "maker": "KGM커머셜",  "size": "mid",     "low_floor": true},
+    {"match": "BS106",                    "family": "BS106",                     "slug": "bs106",       "maker": "자일대우",   "size": "large",   "low_floor": null},
+    {"match": "BS090",                    "family": "BS090",                     "slug": "bs090",       "maker": "자일대우",   "size": "mid",     "low_floor": false},
+    {"match": "카운티\\s*뉴\\s*브리즈",   "family": "카운티 뉴 브리즈",          "slug": "county_breeze", "maker": "현대",     "size": "small",   "low_floor": false},
+    {"match": "뉴카운티",                 "family": "뉴카운티",                  "slug": "new_county",  "maker": "현대",       "size": "small",   "low_floor": false},
+    {"match": "유니버스",                 "family": "유니버스",                  "slug": "universe",    "maker": "현대",       "size": "coach",   "low_floor": false},
+    {"match": "쏠라티",                   "family": "쏠라티",                    "slug": "solati",      "maker": "현대",       "size": "van",     "low_floor": false},
+    {"match": "스타리아",                 "family": "스타리아",                  "slug": "staria",      "maker": "현대",       "size": "minivan", "low_floor": false}
+  ]
+}
